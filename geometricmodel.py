@@ -78,7 +78,8 @@ class GeometricModel(metaclass=abc.ABCMeta):
         if len(self._free_variables) < 1:
             raise Exception("No free variables to fit!")
 
-        # create some model inputs
+        # create some model inputs and useful variables
+        variable_dict = {var: val for var, val in zip(self.VARIABLE_NAMES, self._variables)}
         ordered_free_variables = [var for var in self.VARIABLE_NAMES if var in self._free_variables]
         if bounds is None:
             lower_bounds = [bound for bound, var in zip(self.DEFAULT_FIT_BOUNDS[0], self.VARIABLE_NAMES) if var in self._free_variables]
@@ -95,6 +96,13 @@ class GeometricModel(metaclass=abc.ABCMeta):
         # ^ array index: old free variable (x), items: associated root variable (r), s.t. new variable is v = x - r > 0
         redefined_variable_indexes = []
         for i, (lbound, ubound) in enumerate(zip(*bounds)):
+            # replace fixed variables in bounds with stored numbers
+            if lbound in self._fixed_variables:
+                bounds[0][i] = variable_dict[lbound]
+            if ubound in self._fixed_variables:
+                bounds[1][i] = variable_dict[ubound]
+            
+            # replace free variables in bounds by redefining the variables
             is_var_lbound, is_var_ubound = lbound in ordered_free_variables, ubound in ordered_free_variables
             if is_var_lbound and is_var_ubound:
                 raise TypeError("Double dependent bounds are currently not supported.")
@@ -190,6 +198,14 @@ class GeometricModel(metaclass=abc.ABCMeta):
     def fitted_variables(self):
         return {var: val for var, val in zip(self.VARIABLE_NAMES, self._variables) if var in self._fitted_variables}
 
+    @property
+    def ordered_fixed_variables(self):
+        return [var for var in self.VARIABLE_NAMES if var in self._fixed_variables]
+
+    @property
+    def ordered_free_variables(self):
+        return [var for var in self.VARIABLE_NAMES if var in self._free_variables]
+    
     @property
     def ordered_fitted_variables(self):
         return [var for var in self.VARIABLE_NAMES if var in self._fitted_variables]
@@ -334,7 +350,7 @@ class PowerLawTorusSmooth(GeometricModel):
     VARIABLE_NAMES = ('norm', 'radial_index', 'polar_index', 'rmin', 'rmax', 'opening_angle', 'radial_cutoff_index', 'polar_cutoff_index')
     ARGUMENT_NAMES = ('r', 'theta', 'phi')
     DEFAULT_FIT_BOUNDS = ([0.0, -np.inf, -np.inf, 0.0, 'rmin', 0.0, 3.0, 3.0], 
-                          [np.inf, np.inf, np.inf, 'rmax', np.inf, 180.0, np.inf, np.inf])
+                          [np.inf, np.inf, np.inf, 'rmax', np.inf, 90.0, np.inf, np.inf])
     
     NORM_SCHEMES = ('fixed_max', 'inf_norm')
     NORM_SCHEME_DEFAULT = 'fixed_max'
