@@ -470,7 +470,7 @@ def shot_noise(size, snr=10.0, signal_amplitude=1.0):
 ########## Plotting Functions ##########
 ########################################
 
-def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=False, cmap='viridis', coords='cart'):
+def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=False, cmap='viridis', coords='cart', min=None, max=None):
     if coords == 'sph':
         x, y, z = sph_to_cart(x, y, z)
     elif coords == 'cyl':
@@ -481,11 +481,15 @@ def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=F
     slice_0 = np.logical_and(-eps<z, z<eps)
     slice_1 = np.logical_and(-eps<x, x<eps)
     slice_2 = np.logical_and(-eps<y, y<eps)
-    norm_min = data[data>0.0].min() if log_scale else data.min()
+    if min is None:
+        norm_min = data[data>0.0].min() if log_scale else data.min()
+        if norm_min != data.min():
+            warnings.warn("Some of the data has been cut, since it is less than 0 and a log scale colorbar is set.")
+    else:
+        norm_min = min
+    norm_max = max if max is not None else data.max()
     matplotlib_normalizer = matplotlib.colors.LogNorm if log_scale else matplotlib.colors.Normalize
-    norm = matplotlib_normalizer(norm_min, data.max())
-    if norm_min != data.min():
-        warnings.warn("Some of the data has been cut, since it is less than 0 and a log scale colorbar is set.")
+    norm = matplotlib_normalizer(norm_min, norm_max)
     im = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
     axes[0].scatter(x[slice_0], y[slice_0], c=data[slice_0], s=4, cmap=cmap, norm=norm)
     axes[1].scatter(y[slice_1], z[slice_1], c=data[slice_1], s=4, cmap=cmap, norm=norm)
