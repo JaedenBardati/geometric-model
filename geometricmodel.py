@@ -486,7 +486,7 @@ def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=F
     norm = matplotlib_normalizer(norm_min, data.max())
     if norm_min != data.min():
         warnings.warn("Some of the data has been cut, since it is less than 0 and a log scale colorbar is set.")
-    im = matplotlib.cm.ScalarMappable(norm=norm)
+    im = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
     axes[0].scatter(x[slice_0], y[slice_0], c=data[slice_0], s=4, cmap=cmap, norm=norm)
     axes[1].scatter(y[slice_1], z[slice_1], c=data[slice_1], s=4, cmap=cmap, norm=norm)
     axes[2].scatter(x[slice_2], z[slice_2], c=data[slice_2], s=4, cmap=cmap, norm=norm)
