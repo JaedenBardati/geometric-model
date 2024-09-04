@@ -98,6 +98,11 @@ class GeometricModel(metaclass=abc.ABCMeta):
         
         # support for bounds that are defined by other variables by defining new variables
         if bounds is not None:
+            if len(bounds) != 2:
+                raise ValueError("Bounds must be in a 2-tuple containing the lists of lower and upper bounds to the free variables, respectively, in order.")
+            if len(bounds[0]) != len(self._free_variables) or len(bounds[1]) != len(self._free_variables):
+                raise ValueError("Upper and lower bounds must have the same length as the free variables.")
+            
             _, unique_variable_counts = np.unique([v for v in np.ravel(bounds) if v in ordered_free_variables], return_counts=True)
             if unique_variable_counts.size != 0 and np.any(unique_variable_counts > 1): # if any doubles of variable type elements
                 raise ValueError("Unrecognizable variable bounds structure. Duplicates of variables in the bounds is not supported.")
