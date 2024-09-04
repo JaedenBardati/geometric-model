@@ -40,6 +40,11 @@ class GeometricModel(metaclass=abc.ABCMeta):
     def DEFAULT_FIT_BOUNDS(self):
         pass
 
+    @property
+    @abc.abstractmethod
+    def DEFAULT_FIT_SCALE(self):
+        pass
+
     @abc.abstractmethod
     def _model_function(self, *model_args):
         pass
@@ -73,66 +78,79 @@ class GeometricModel(metaclass=abc.ABCMeta):
         return self._model_function(*model_args)
 
     
-    def fit(self, fit_data, *model_args, bounds=None, **curvefit_kwargs):
-        # Pass the data to fit and the model args.
+    def fit(self, fit_data, *model_args, bounds='default', x_scale=None, **other_curvefit_kwargs):
+        # Pass the data to fit and the model args. 
+        # Pass x_scale='default' to use the class-defined scale, x_scale=None for no scale, and x_ 
         if len(self._free_variables) < 1:
             raise Exception("No free variables to fit!")
 
         # create some model inputs and useful variables
         variable_dict = {var: val for var, val in zip(self.VARIABLE_NAMES, self._variables)}
         ordered_free_variables = [var for var in self.VARIABLE_NAMES if var in self._free_variables]
-        if bounds is None:
-            lower_bounds = [bound for bound, var in zip(self.DEFAULT_FIT_BOUNDS[0], self.VARIABLE_NAMES) if var in self._free_variables]
-            upper_bounds = [bound for bound, var in zip(self.DEFAULT_FIT_BOUNDS[1], self.VARIABLE_NAMES) if var in self._free_variables]
-            bounds = (lower_bounds, upper_bounds)
-
-        # support for bounds that are defined by other variables by defining new variables
-        _, unique_variable_counts = np.unique([v for v in np.ravel(bounds) if v in ordered_free_variables], return_counts=True)
-        if unique_variable_counts.size != 0 and np.any(unique_variable_counts > 1): # if any doubles of variable type elements
-            raise ValueError("Unrecognizable variable bounds structure. Duplicates of variables in the bounds is not supported.")
-            # Note: this is very likely too restrictive! If you encounter an error, try deleting this and seeing if it still works.
-
-        root_variable_indexes = [None for _ in ordered_free_variables]
-        # ^ array index: old free variable (x), items: associated root variable (r), s.t. new variable is v = x - r > 0
-        redefined_variable_indexes = []
-        for i, (lbound, ubound) in enumerate(zip(*bounds)):
-            # replace fixed variables in bounds with stored numbers
-            if lbound in self._fixed_variables:
-                bounds[0][i] = variable_dict[lbound]
-            if ubound in self._fixed_variables:
-                bounds[1][i] = variable_dict[ubound]
-            
-            # replace free variables in bounds by redefining the variables
-            is_var_lbound, is_var_ubound = lbound in ordered_free_variables, ubound in ordered_free_variables
-            if is_var_lbound and is_var_ubound:
-                raise TypeError("Double dependent bounds are currently not supported.")
-            
-            if is_var_ubound:
-                j = ordered_free_variables.index(ubound)
-                if ordered_free_variables[i] != bounds[0][j]:
-                    raise ValueError("Variable '{}' must referenced as a minimum in the bounds of variable '{}', since the contrapositive is true.".format(ordered_free_variables[i], ubound))
-                if j not in redefined_variable_indexes:
-                    root_variable_indexes[j] = i
-                    redefined_variable_indexes.append(j)
-            
-            if is_var_lbound:
-                j = ordered_free_variables.index(lbound)
-                if ordered_free_variables[i] != bounds[1][j]:
-                    raise ValueError("Variable '{}' must referenced as a maximum in the bounds of variable '{}', since the contrapositive is true.".format(ordered_free_variables[i], lbound))
-                if ubound != np.inf and ubound is not None: 
-                    raise ValueError("Since variable '{}' has lower bound variable {}, it must be bounded at infinity. Support is not currently provided for finitely upper bounded variable dependent bounds.".format(ordered_free_variables[i], lbound))
-                    # Note: If you want to implement this, you have to get around the v+x<MAX, v>0, x>0 triangle constraint, possibly with some non-linear transformation. 
-                if j not in root_variable_indexes:
-                    root_variable_indexes[i] = j
-                    redefined_variable_indexes.append(i)
-
-        # actually change the bounds due to the change in the variables
-        for old_var_index, root_index in enumerate(root_variable_indexes):
-            if root_index is not None:
-                bounds[1][root_index] = bounds[1][old_var_index] # i.e. np.inf
-                bounds[0][old_var_index] = 0
-                # Note: bounds[1][old_var_index] says np.inf still, despite the change of variable, due to the nature of infinity (see other note above). 
         
+        if bounds == 'default':
+            lower_bounds = [lbound for lbound, var in zip(self.DEFAULT_FIT_BOUNDS[0], self.VARIABLE_NAMES) if var in self._free_variables]
+            upper_bounds = [ubound for ubound, var in zip(self.DEFAULT_FIT_BOUNDS[1], self.VARIABLE_NAMES) if var in self._free_variables]
+            bounds = (lower_bounds, upper_bounds)
+        
+        if x_scale == 'default':
+            x_scale = [scale_element for scale_element, var in zip(self.DEFAULT_FIT_SCALE, self.VARIABLE_NAMES) if var in self._free_variables]
+        
+        # support for bounds that are defined by other variables by defining new variables
+        if bounds is not None:
+            _, unique_variable_counts = np.unique([v for v in np.ravel(bounds) if v in ordered_free_variables], return_counts=True)
+            if unique_variable_counts.size != 0 and np.any(unique_variable_counts > 1): # if any doubles of variable type elements
+                raise ValueError("Unrecognizable variable bounds structure. Duplicates of variables in the bounds is not supported.")
+                # Note: this is very likely too restrictive! If you encounter an error, try deleting this and seeing if it still works.
+    
+            root_variable_indexes = [None for _ in ordered_free_variables]
+            # ^ array index: old free variable (x), items: associated root variable (r), s.t. new variable is v = x - r > 0
+            redefined_variable_indexes = []
+            for i, (lbound, ubound) in enumerate(zip(*bounds)):
+                # replace fixed variables in bounds with stored numbers
+                if lbound in self._fixed_variables:
+                    bounds[0][i] = variable_dict[lbound]
+                if ubound in self._fixed_variables:
+                    bounds[1][i] = variable_dict[ubound]
+                
+                # replace free variables in bounds by redefining the variables
+                is_var_lbound, is_var_ubound = lbound in ordered_free_variables, ubound in ordered_free_variables
+                if is_var_lbound and is_var_ubound:
+                    raise TypeError("Double dependent bounds are currently not supported.")
+                
+                if is_var_ubound:
+                    j = ordered_free_variables.index(ubound)
+                    if ordered_free_variables[i] != bounds[0][j]:
+                        raise ValueError("Variable '{}' must referenced as a minimum in the bounds of variable '{}', since the contrapositive is true.".format(ordered_free_variables[i], ubound))
+                    if j not in redefined_variable_indexes:
+                        root_variable_indexes[j] = i
+                        redefined_variable_indexes.append(j)
+                
+                if is_var_lbound:
+                    j = ordered_free_variables.index(lbound)
+                    if ordered_free_variables[i] != bounds[1][j]:
+                        raise ValueError("Variable '{}' must referenced as a maximum in the bounds of variable '{}', since the contrapositive is true.".format(ordered_free_variables[i], lbound))
+                    if ubound != np.inf and ubound is not None: 
+                        raise ValueError("Since variable '{}' has lower bound variable {}, it must be bounded at infinity. Support is not currently provided for finitely upper bounded variable dependent bounds.".format(ordered_free_variables[i], lbound))
+                        # Note: If you want to implement this, you have to get around the r+v<MAX, r>0, v>0 triangle constraint, possibly with some non-linear transformation. 
+                    if j not in root_variable_indexes:
+                        root_variable_indexes[i] = j
+                        redefined_variable_indexes.append(i)
+
+            # actually change the bounds due to the change in the variables
+            for old_var_index, root_index in enumerate(root_variable_indexes):
+                if root_index is not None:
+                    bounds[1][root_index] = bounds[1][old_var_index] # i.e. np.inf
+                    bounds[0][old_var_index] = 0.0
+                    if x_scale is not None and x_scale != 'jac':
+                        if x_scale[root_index] < x_scale[old_var_index]:
+                            x_scale[old_var_index] = x_scale[old_var_index] - x_scale[root_index]
+                        if x_scale[root_index] == x_scale[old_var_index]:
+                            x_scale[old_var_index] = x_scale[old_var_index]/10.  # one order of magnitude smaller than given (since it is now the difference)
+                        else:
+                            raise ValueError("The scale of free variable '{}' is larger than the scale of free variable '{}', despite the bounds requiring '{}' to be smaller than '{}'.".format(ordered_free_variables[root_index], ordered_free_variables[old_var_index], ordered_free_variables[root_index], ordered_free_variables[old_var_index]))
+                    # Note: bounds[1][old_var_index] says np.inf still, despite the change of variable, due to the nature of infinity (see other note above). 
+            
         # create model function call for scipy
         def m_foo(model_args, *free_variables):
             # convert from new artificial variables from bound change back to the model's free variables (x = r + v)
@@ -146,10 +164,19 @@ class GeometricModel(metaclass=abc.ABCMeta):
             pre_fas = pre_fullargspec(func)
             return scipy._lib._util.FullArgSpec(args, [], pre_fas.varkw, pre_fas.defaults, pre_fas.kwonlyargs,
                                pre_fas.kwonlydefaults, pre_fas.annotations)
-
+        
         # run model fitting
         scipy.optimize._minpack_py._getfullargspec = my_fullargspec
-        popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, bounds=bounds, **curvefit_kwargs)  # run curve fitting
+        if x_scale is None:
+            if bounds is None:
+                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, **other_curvefit_kwargs)
+            else:
+                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, bounds=bounds, **other_curvefit_kwargs)
+        else:
+            if bounds is None:
+                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, x_scale=x_scale, **other_curvefit_kwargs)
+            else:
+                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, bounds=bounds, x_scale=x_scale, **other_curvefit_kwargs)
         scipy.optimize._minpack_py._getfullargspec = pre_fullargspec
 
         # convert from new artificial variables from bound change back to the model's free variables (x = r + v)
@@ -299,6 +326,7 @@ class PowerLawSphere(GeometricModel):
     ARGUMENT_NAMES = ('r', 'theta', 'phi')
     DEFAULT_FIT_BOUNDS = ([0.0, -np.inf, 0.0], 
                           [np.inf, np.inf, np.inf])
+    DEFAULT_FIT_SCALE = (1., 1., 1.)
     
     def __init__(self, norm, index, rmax):
         super().__init__(norm, index, rmax)
@@ -322,6 +350,7 @@ class PowerLawTorus(GeometricModel):
     ARGUMENT_NAMES = ('r', 'theta', 'phi')
     DEFAULT_FIT_BOUNDS = ([0.0, -np.inf, -np.inf, 0.0, 'rmin', 0.0], 
                           [np.inf, np.inf, np.inf, 'rmax', np.inf, 180.0])
+    DEFAULT_FIT_SCALE = (1., 1., 1., 1., 1., 10.)
     
     def __init__(self, norm, radial_index, polar_index, rmin, rmax, opening_angle):
         super().__init__(norm, radial_index, polar_index, rmin, rmax, opening_angle)
@@ -351,6 +380,7 @@ class PowerLawTorusSmooth(GeometricModel):
     ARGUMENT_NAMES = ('r', 'theta', 'phi')
     DEFAULT_FIT_BOUNDS = ([0.0, -np.inf, -np.inf, 0.0, 'rmin', 0.0, 3.0, 3.0], 
                           [np.inf, np.inf, np.inf, 'rmax', np.inf, 90.0, np.inf, np.inf])
+    DEFAULT_FIT_SCALE = (1., 1., 1., 1., 1., 10., 100., 100.)
     
     NORM_SCHEMES = ('fixed_max', 'inf_norm')
     NORM_SCHEME_DEFAULT = 'fixed_max'
