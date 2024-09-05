@@ -229,7 +229,10 @@ class GeometricModel(metaclass=abc.ABCMeta):
         self._fitted_variables = set(ordered_free_variables)
         self._fit_covariance_matrix = pcov
 
-        return r
+        if full_output:
+            return popt, pcov, infodict, mesg, ier
+        
+        return popt, pcov
 
     
     def sample(self, *sample_args, argument_sampling_function=None, **sample_kwargs):
