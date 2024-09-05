@@ -42,7 +42,7 @@ class GeometricModel(metaclass=abc.ABCMeta):
 
     @property
     @abc.abstractmethod
-    def DEFAULT_FIT_SCALE(self):
+    def DEFAULT_FIT_INITIAL_VALUES(self):
         pass
 
     @abc.abstractmethod
@@ -64,6 +64,7 @@ class GeometricModel(metaclass=abc.ABCMeta):
         self._free_variables = set([var for var, val in zip(self.VARIABLE_NAMES, self._variables) if val is None])
         self._fitted_variables = set()
         self._fit_covariance_matrix = None
+        self._extra_fit_info = None
         assert len(self._fixed_variables.intersection(self._free_variables)) == 0, "There is an overlap between the fixed and free variables."
     
     def __call__(self, *model_args, **free_variables):
@@ -78,7 +79,7 @@ class GeometricModel(metaclass=abc.ABCMeta):
         return self._model_function(*model_args)
 
     
-    def fit(self, fit_data, *model_args, bounds='default', x_scale=None, **other_curvefit_kwargs):
+    def fit(self, fit_data, *model_args, bounds='default', p0='default', sigma=None, x_scale=None, full_output=False, **other_curvefit_kwargs):
         # Pass the data to fit and the model args. 
         # Pass x_scale='default' to use the class-defined scale, x_scale=None for no scale, and x_ 
         if len(self._free_variables) < 1:
@@ -87,14 +88,14 @@ class GeometricModel(metaclass=abc.ABCMeta):
         # create some model inputs and useful variables
         variable_dict = {var: val for var, val in zip(self.VARIABLE_NAMES, self._variables)}
         ordered_free_variables = [var for var in self.VARIABLE_NAMES if var in self._free_variables]
-        
+
         if bounds == 'default':
             lower_bounds = [lbound for lbound, var in zip(self.DEFAULT_FIT_BOUNDS[0], self.VARIABLE_NAMES) if var in self._free_variables]
             upper_bounds = [ubound for ubound, var in zip(self.DEFAULT_FIT_BOUNDS[1], self.VARIABLE_NAMES) if var in self._free_variables]
             bounds = (lower_bounds, upper_bounds)
         
-        if x_scale == 'default':
-            x_scale = [scale_element for scale_element, var in zip(self.DEFAULT_FIT_SCALE, self.VARIABLE_NAMES) if var in self._free_variables]
+        if p0 == 'default':
+            p0 = [scale_element for scale_element, var in zip(self.DEFAULT_FIT_INITIAL_VALUES, self.VARIABLE_NAMES) if var in self._free_variables]
         
         # support for bounds that are defined by other variables by defining new variables
         if bounds is not None:
@@ -147,14 +148,35 @@ class GeometricModel(metaclass=abc.ABCMeta):
                 if root_index is not None:
                     bounds[1][root_index] = bounds[1][old_var_index] # i.e. np.inf
                     bounds[0][old_var_index] = 0.0
+                    # Note: bounds[1][old_var_index] says np.inf still, despite the change of variable, due to the nature of infinity (see other note above).
+                    if p0 is not None:
+                        if p0[root_index] < p0[old_var_index]:
+                            p0[old_var_index] = p0[old_var_index] - p0[root_index]
+                        if p0[root_index] == p0[old_var_index]:
+                            p0[old_var_index] = p0[old_var_index]/10. # 1 ofm smaller than given (since it is now the difference)
+                        else:
+                            raise ValueError("The initial value of free variable '{}' (index {}) is larger than the initial value of free variable '{}' (index {}), despite the bounds requiring '{}' to be smaller than '{}'.".format(ordered_free_variables[root_index], ordered_free_variables[old_var_index], root_index, old_var_index, ordered_free_variables[root_index], ordered_free_variables[old_var_index]))
+                    if sigma is not None:
+                        if np.asarray(sigma).shape == 0:
+                            pass
+                        elif sigma.shape == (len(ordered_free_variables),):
+                            sigma[old_var_index] = np.sqrt(sigma[old_var_index]**2 + sigma[root_index]**2)
+                        elif len(sigma.shape) == (len(ordered_free_variables), len(ordered_free_variables)):
+                            extra_sigma = np.zeros(sigma.shape)
+                            extra_sigma[old_var_index, old_var_index] += sigma[root_index, root_index]
+                            for t in range(sigma.shape[0]):
+                                extra_sigma[old_var_index, t] += sigma[root_index, t]
+                                extra_sigma[t, old_var_index] += sigma[t, root_index]
+                            sigma = sigma + extra_sigma
+                        else:
+                            raise ValueError("Must enter either a scalar, an N sized array or an NxN matrix for sigma, where N is the number of free variables.")
                     if x_scale is not None and x_scale != 'jac':
                         if x_scale[root_index] < x_scale[old_var_index]:
                             x_scale[old_var_index] = x_scale[old_var_index] - x_scale[root_index]
                         if x_scale[root_index] == x_scale[old_var_index]:
-                            x_scale[old_var_index] = x_scale[old_var_index]/10.  # one order of magnitude smaller than given (since it is now the difference)
+                            x_scale[old_var_index] = x_scale[old_var_index]/10.  # 1 ofm smaller than given (since it is now the difference)
                         else:
-                            raise ValueError("The scale of free variable '{}' is larger than the scale of free variable '{}', despite the bounds requiring '{}' to be smaller than '{}'.".format(ordered_free_variables[root_index], ordered_free_variables[old_var_index], ordered_free_variables[root_index], ordered_free_variables[old_var_index]))
-                    # Note: bounds[1][old_var_index] says np.inf still, despite the change of variable, due to the nature of infinity (see other note above). 
+                            raise ValueError("The scale of free variable '{}' is larger than the scale of free variable '{}' (index {}), despite the bounds requiring '{}' (index {}) to be smaller than '{}'.".format(ordered_free_variables[root_index], ordered_free_variables[old_var_index], root_index, old_var_index, ordered_free_variables[root_index], ordered_free_variables[old_var_index]))
             
         # create model function call for scipy
         def m_foo(model_args, *free_variables):
@@ -174,16 +196,21 @@ class GeometricModel(metaclass=abc.ABCMeta):
         scipy.optimize._minpack_py._getfullargspec = my_fullargspec
         if x_scale is None:
             if bounds is None:
-                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, full_output=full_output, **other_curvefit_kwargs)
             else:
-                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, bounds=bounds, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, bounds=bounds, full_output=full_output, **other_curvefit_kwargs)
         else:
             if bounds is None:
-                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, x_scale=x_scale, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, x_scale=x_scale, full_output=full_output, **other_curvefit_kwargs)
             else:
-                popt, pcov = scipy.optimize.curve_fit(m_foo, model_args, fit_data, bounds=bounds, x_scale=x_scale, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, bounds=bounds, full_output=full_output, x_scale=x_scale, **other_curvefit_kwargs)
         scipy.optimize._minpack_py._getfullargspec = pre_fullargspec
-
+        if full_output:
+            popt, pcov, infodict, mesg, ier = r
+            self._extra_fit_info = (infodict, mesg, ier)
+        else:
+            popt, pcov = r
+        
         # convert from new artificial variables from bound change back to the model's free variables (x = r + v)
         for old_var_index, root_index in enumerate(root_variable_indexes):
             if root_index is not None:
@@ -201,8 +228,8 @@ class GeometricModel(metaclass=abc.ABCMeta):
         self._fixed_variables = set(self.VARIABLE_NAMES)
         self._fitted_variables = set(ordered_free_variables)
         self._fit_covariance_matrix = pcov
-        
-        return self.fit_cond
+
+        return r
 
     
     def sample(self, *sample_args, argument_sampling_function=None, **sample_kwargs):
@@ -249,6 +276,10 @@ class GeometricModel(metaclass=abc.ABCMeta):
     @property
     def fit_covariance_matrix(self):
         return self._fit_covariance_matrix
+
+    @property
+    def extra_fit_info(self):
+        return self._extra_fit_info
 
     @property
     def fit_cond(self):
@@ -331,7 +362,7 @@ class PowerLawSphere(GeometricModel):
     ARGUMENT_NAMES = ('r', 'theta', 'phi')
     DEFAULT_FIT_BOUNDS = ([0.0, -np.inf, 0.0], 
                           [np.inf, np.inf, np.inf])
-    DEFAULT_FIT_SCALE = (1., 1., 1.)
+    DEFAULT_FIT_INITIAL_VALUES = (1., 0., 1.)
     
     def __init__(self, norm, index, rmax):
         super().__init__(norm, index, rmax)
@@ -355,7 +386,7 @@ class PowerLawTorus(GeometricModel):
     ARGUMENT_NAMES = ('r', 'theta', 'phi')
     DEFAULT_FIT_BOUNDS = ([0.0, -np.inf, -np.inf, 0.0, 'rmin', 0.0], 
                           [np.inf, np.inf, np.inf, 'rmax', np.inf, 180.0])
-    DEFAULT_FIT_SCALE = (1., 1., 1., 1., 1., 10.)
+    DEFAULT_FIT_INITIAL_VALUES = (1., 0., 0., 1., 2., 10.)
     
     def __init__(self, norm, radial_index, polar_index, rmin, rmax, opening_angle):
         super().__init__(norm, radial_index, polar_index, rmin, rmax, opening_angle)
@@ -385,7 +416,7 @@ class PowerLawTorusSmooth(GeometricModel):
     ARGUMENT_NAMES = ('r', 'theta', 'phi')
     DEFAULT_FIT_BOUNDS = ([0.0, -np.inf, -np.inf, 0.0, 'rmin', 0.0, 3.0, 3.0], 
                           [np.inf, np.inf, np.inf, 'rmax', np.inf, 90.0, np.inf, np.inf])
-    DEFAULT_FIT_SCALE = (1., 1., 1., 1., 1., 10., 100., 100.)
+    DEFAULT_FIT_INITIAL_VALUES = (1., 0., 0., 1., 2., 10., 250., 250.)
     
     NORM_SCHEMES = ('fixed_max', 'inf_norm')
     NORM_SCHEME_DEFAULT = 'fixed_max'
@@ -470,7 +501,7 @@ def shot_noise(size, snr=10.0, signal_amplitude=1.0):
 ########## Plotting Functions ##########
 ########################################
 
-def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=False, cmap='viridis', coords='cart', min=None, max=None):
+def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=False, cmap='viridis', coords='cart', min=None, max=None, s=4):
     if coords == 'sph':
         x, y, z = sph_to_cart(x, y, z)
     elif coords == 'cyl':
@@ -478,22 +509,25 @@ def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=F
     elif coords != 'cart':
         warnings.warn('Unknown coordinate system provided. Defaulting to standard axis cuts as though it is Cartesian.')
     fig, axes = plt.subplots(1, 3, figsize=(13, 3.5))
+    if log_scale:
+        data_gtr_0 = data>0.0
+        if not np.all(data_gtr_0):
+            data = data[data_gtr_0]
+            x = x[data_gtr_0]
+            y = y[data_gtr_0]
+            z = z[data_gtr_0]
+            warnings.warn("Some of the data has been cut, since it is less than 0 and a log scale colorbar is set.")
     slice_0 = np.logical_and(-eps<z, z<eps)
     slice_1 = np.logical_and(-eps<x, x<eps)
     slice_2 = np.logical_and(-eps<y, y<eps)
-    if min is None:
-        norm_min = data[data>0.0].min() if log_scale else data.min()
-        if norm_min != data.min():
-            warnings.warn("Some of the data has been cut, since it is less than 0 and a log scale colorbar is set.")
-    else:
-        norm_min = min
-    norm_max = max if max is not None else data.max()
+    norm_min = min if min is not None else np.min([data[slice_0].min(), data[slice_1].min(), data[slice_2].min()])
+    norm_max = max if max is not None else np.max([data[slice_0].max(), data[slice_1].max(), data[slice_2].max()])
     matplotlib_normalizer = matplotlib.colors.LogNorm if log_scale else matplotlib.colors.Normalize
     norm = matplotlib_normalizer(norm_min, norm_max)
     im = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
-    axes[0].scatter(x[slice_0], y[slice_0], c=data[slice_0], s=4, cmap=cmap, norm=norm)
-    axes[1].scatter(y[slice_1], z[slice_1], c=data[slice_1], s=4, cmap=cmap, norm=norm)
-    axes[2].scatter(x[slice_2], z[slice_2], c=data[slice_2], s=4, cmap=cmap, norm=norm)
+    axes[0].scatter(x[slice_0], y[slice_0], c=data[slice_0], s=s, cmap=cmap, norm=norm)
+    axes[1].scatter(y[slice_1], z[slice_1], c=data[slice_1], s=s, cmap=cmap, norm=norm)
+    axes[2].scatter(x[slice_2], z[slice_2], c=data[slice_2], s=s, cmap=cmap, norm=norm)
     axes[0].set_xlim(-lim, lim)
     axes[0].set_ylim(-lim, lim)
     axes[1].set_xlim(-lim, lim)
