@@ -156,11 +156,9 @@ class GeometricModel(metaclass=abc.ABCMeta):
                         else:
                             raise ValueError("The initial value of free variable '{}' (index {}) is larger than the initial value of free variable '{}' (index {}), despite the bounds requiring '{}' to be smaller than '{}'.".format(ordered_free_variables[root_index], ordered_free_variables[old_var_index], root_index, old_var_index, ordered_free_variables[root_index], ordered_free_variables[old_var_index]))
                     if sigma is not None:
-                        if np.asarray(sigma).shape == 0:
-                            pass
-                        elif sigma.shape == (len(ordered_free_variables),):
+                        if len(sigma.shape) == 1 and sigma.shape[0] == len(fit_data):
                             sigma[old_var_index] = np.sqrt(sigma[old_var_index]**2 + sigma[root_index]**2)
-                        elif len(sigma.shape) == (len(ordered_free_variables), len(ordered_free_variables)):
+                        elif len(sigma.shape) == 2 and sigma.shape[0] == sigma.shape[1] == len(fit_data):
                             extra_sigma = np.zeros(sigma.shape)
                             extra_sigma[old_var_index, old_var_index] += sigma[root_index, root_index]
                             for t in range(sigma.shape[0]):
@@ -168,7 +166,7 @@ class GeometricModel(metaclass=abc.ABCMeta):
                                 extra_sigma[t, old_var_index] += sigma[t, root_index]
                             sigma = sigma + extra_sigma
                         else:
-                            raise ValueError("Must enter either a scalar, an N sized array or an NxN matrix for sigma, where N is the number of free variables.")
+                            raise ValueError("Must enter either a scalar, an N sized array or an NxN matrix for sigma, where N is the number of data points.")
                     if x_scale is not None and x_scale != 'jac':
                         if x_scale[root_index] < x_scale[old_var_index]:
                             x_scale[old_var_index] = x_scale[old_var_index] - x_scale[root_index]
