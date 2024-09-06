@@ -63,7 +63,6 @@ class GeometricModel(metaclass=abc.ABCMeta):
         self._fixed_variables = set([var for var, val in zip(self.VARIABLE_NAMES, self._variables) if val is not None])
         self._free_variables = set([var for var, val in zip(self.VARIABLE_NAMES, self._variables) if val is None])
         self._fitted_variables = set()
-        self._fit_covariance_matrix = None
         self._extra_fit_info = None
         assert len(self._fixed_variables.intersection(self._free_variables)) == 0, "There is an overlap between the fixed and free variables."
     
@@ -196,20 +195,16 @@ class GeometricModel(metaclass=abc.ABCMeta):
         scipy.optimize._minpack_py._getfullargspec = my_fullargspec
         if x_scale is None:
             if bounds is None:
-                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, full_output=full_output, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, full_output=True, **other_curvefit_kwargs)
             else:
-                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, bounds=bounds, full_output=full_output, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, bounds=bounds, full_output=True, **other_curvefit_kwargs)
         else:
             if bounds is None:
-                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, x_scale=x_scale, full_output=full_output, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, x_scale=x_scale, full_output=True, **other_curvefit_kwargs)
             else:
-                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, bounds=bounds, full_output=full_output, x_scale=x_scale, **other_curvefit_kwargs)
+                r = scipy.optimize.curve_fit(m_foo, model_args, fit_data, p0=p0, sigma=sigma, bounds=bounds, full_output=True, x_scale=x_scale, **other_curvefit_kwargs)
         scipy.optimize._minpack_py._getfullargspec = pre_fullargspec
-        if full_output:
-            popt, pcov, infodict, mesg, ier = r
-            self._extra_fit_info = (infodict, mesg, ier)
-        else:
-            popt, pcov = r
+        popt, pcov, infodict, mesg, ier = r
         
         # convert from new artificial variables from bound change back to the model's free variables (x = r + v)
         for old_var_index, root_index in enumerate(root_variable_indexes):
@@ -227,7 +222,7 @@ class GeometricModel(metaclass=abc.ABCMeta):
         self._free_variables = set()
         self._fixed_variables = set(self.VARIABLE_NAMES)
         self._fitted_variables = set(ordered_free_variables)
-        self._fit_covariance_matrix = pcov
+        self._extra_fit_info = (pcov, infodict, mesg, ier)
 
         if full_output:
             return popt, pcov, infodict, mesg, ier
@@ -274,20 +269,37 @@ class GeometricModel(metaclass=abc.ABCMeta):
     
     @property
     def fitted_variable_errors(self):
-        return {variable: np.sqrt(variance) for variable, variance in zip(self.ordered_fitted_variables, np.diag(self._fit_covariance_matrix))}
+        return {variable: np.sqrt(variance) for variable, variance in zip(self.ordered_fitted_variables, np.diag(self.fit_covariance_matrix))}
 
     @property
     def fit_covariance_matrix(self):
-        return self._fit_covariance_matrix
+        return self._extra_fit_info[0]
 
     @property
-    def extra_fit_info(self):
-        return self._extra_fit_info
+    def fit_nfev(self):
+        return self._extra_fit_info[1]['nfev']
 
     @property
     def fit_cond(self):
-        # if this is very large, the model is likely overparametrized. 
-        return np.linalg.cond(self._fit_covariance_matrix)
+        # If this is very large, the model is likely overparametrized. 
+        return np.linalg.cond(self.fit_covariance_matrix)
+
+    @property
+    def fit_chisq(self):
+        return None if self._extra_fit_info is None else (self._extra_fit_info[1]['fvec']**2).sum()
+
+    @property
+    def fit_dof(self):
+        return None if self._extra_fit_info is None else len(self._extra_fit_info[1]['fvec']) - len(self.fitted_variables)
+
+    @property
+    def fit_reduced_chisq(self):
+        # If this is very large, the model does not fit the data well. If it's very small, there may be overfitting. It's best around unity.
+        return None if self.fit_chisq is None else self.fit_chisq/self.fit_dof
+
+    @property
+    def fit_termination_message(self):
+        return (self._extra_fit_info[2], self._extra_fit_info[3])
 
 
 ########################################
