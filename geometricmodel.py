@@ -80,7 +80,7 @@ class GeometricModel(metaclass=abc.ABCMeta):
     
     def fit(self, fit_data, *model_args, bounds='default', p0='default', sigma=None, x_scale=None, full_output=False, **other_curvefit_kwargs):
         # Pass the data to fit and the model args. 
-        # Pass x_scale='default' to use the class-defined scale, x_scale=None for no scale, and x_ 
+        # Uses scipy "curve_fit" function (see https://scipy.github.io/devdocs/reference/generated/scipy.optimize.curve_fit.html)
         if len(self._free_variables) < 1:
             raise Exception("No free variables to fit!")
 
