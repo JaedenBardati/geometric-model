@@ -529,6 +529,8 @@ def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=F
             x = x[data_gtr_0]
             y = y[data_gtr_0]
             z = z[data_gtr_0]
+            if len(np.asarray(s).shape) == 1:
+                s = s[data_gtr_0]
             warnings.warn("Some of the data has been cut, since it is less than 0 and a log scale colorbar is set.")
     slice_0 = np.logical_and(-eps<z, z<eps)
     slice_1 = np.logical_and(-eps<x, x<eps)
@@ -538,9 +540,9 @@ def quick_slice_plot(x, y, z, data, eps=0.01, lim=10, ret_fig=False, log_scale=F
     matplotlib_normalizer = matplotlib.colors.LogNorm if log_scale else matplotlib.colors.Normalize
     norm = matplotlib_normalizer(norm_min, norm_max)
     im = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap)
-    axes[0].scatter(x[slice_0], y[slice_0], c=data[slice_0], s=s, cmap=cmap, norm=norm)
-    axes[1].scatter(y[slice_1], z[slice_1], c=data[slice_1], s=s, cmap=cmap, norm=norm)
-    axes[2].scatter(x[slice_2], z[slice_2], c=data[slice_2], s=s, cmap=cmap, norm=norm)
+    axes[0].scatter(x[slice_0], y[slice_0], c=data[slice_0], s=s[slice_0] if len(np.asarray(s).shape) == 1 else s, cmap=cmap, norm=norm)
+    axes[1].scatter(y[slice_1], z[slice_1], c=data[slice_1], s=s[slice_1] if len(np.asarray(s).shape) == 1 else s, cmap=cmap, norm=norm)
+    axes[2].scatter(x[slice_2], z[slice_2], c=data[slice_2], s=s[slice_2] if len(np.asarray(s).shape) == 1 else s, cmap=cmap, norm=norm)
     axes[0].set_xlim(-lim, lim)
     axes[0].set_ylim(-lim, lim)
     axes[1].set_xlim(-lim, lim)
